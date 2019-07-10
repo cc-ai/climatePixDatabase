@@ -1,6 +1,6 @@
 import os
 import sys
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 import firebase_admin
 from firebase_admin import firestore, storage as firebase_storage, credentials
@@ -16,16 +16,23 @@ class ImageInfo:
     """ Image info class representing a image info stored in Firebase database. Properties:
         - category: image category
         - location: image location
-        - path: image path in Firebase storage. To be used to retrieve image file from storage.
         - url: public web URL to access image file, usable in browser.
+        - firebase_path: image path in Firebase storage. To be used to retrieve image file from storage.
+        - local_path: local file path where image is downloaded. Initialized with None, you are free
+            to set it manually to remember where you downloaded the image.
+            If you use download memthods from class ClimatePixDatabase (`download_image() or download_all_images()`),
+            this field will be automatically filled.
     """
-    __slots__ = ('category', 'location', 'path', 'url')
+    __slots__ = ('category', 'location', 'firebase_path', 'local_path', 'url')
+
+    DEFAULT_CATEGORY = 'Flood'
 
     def __init__(self, dictionary):
-        self.category = dictionary['category']
+        self.category = dictionary['category'] or ImageInfo.DEFAULT_CATEGORY
         self.location = dictionary['location']
-        self.path = dictionary['path']
+        self.firebase_path = dictionary['path']
         self.url = dictionary['url']
+        self.local_path = None
 
 
 class UploadInfo:
@@ -59,8 +66,8 @@ class UploadInfo:
         return timestamp.seconds * 1000000000 + timestamp.nanos
 
 
-class Firebase:
-    """ Firebase class to be used to connect to Firebase, get uploads info and download uploaded images.
+class ClimatePixDatabase:
+    """ Class to be used to connect to Firebase, get uploads info and download uploaded images.
         Credentials JSON file must be placed on the folder when script is executed. File name must be:
         "credentials.json"
     """
@@ -80,8 +87,8 @@ class Firebase:
         # type: (CollectionReference, Optional[DatetimeWithNanoseconds]) -> List[UploadInfo]
         """ Retrieve uploads from given collection. If after is specified, it should be a
             DateWithNanoseconds object used to return only uploads occurred after this date.
-            :param collection: a Firebase collection object (e.g. firebase.__dev_collection
-                and firebase.__public_collection attributes)
+            :param collection: a Firebase collection object (e.g. ClimatePixDatabase.__dev_collection
+                and ClimatePixDatabase.__public_collection attributes)
             :param after: (optional) a DateWithNanoseconds object representing a timestamp
                 (e.g. ImageInfo.timestamp field). If provided, only uploads
                 strictly more recent than this timestamp will be returned.
@@ -118,20 +125,30 @@ class Firebase:
         return self.__get_uploads(self.__public_collection, after=after)
 
     def download_image(self, image_info, filename):
-        # type: (ImageInfo, str) -> None
+        # type: (ImageInfo, str) -> bool
         """ Download image file associated to given image info into given file name.
+            If image is successfully downloaded, image_info.local_path will be updated with filename.
             :param image_info: ImageInfo object
             :param filename: output file path
+            :return True if image was successfully downloaded, False otherwise.
         """
-        blob = self.__storage.get_blob(image_info.path)
-        dir_name = os.path.dirname(filename)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-        blob.download_to_filename(filename)
+        is_downloaded = False
+        blob = self.__storage.get_blob(image_info.firebase_path)
+        if blob is not None:
+            dir_name = os.path.dirname(filename)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            blob.download_to_filename(filename)
+            if os.path.exists(filename):
+                image_info.local_path = filename
+                is_downloaded = True
+        return is_downloaded
 
     def download_all_images(self, uploads, output_folder, verbose=False):
         # type: (List[UploadInfo], str, bool) -> int
         """ Download all images from given list of uploads to given output folder.
+            If an image is successfully downloaded, field ImageInfo.local_path
+            of corresponding ImageInfo object will be updated with local image path.
             :param uploads: a list of UploadInfo objects.
             :param output_folder: string representing output folder. Will be created if not exists.
             :param verbose: if True, print some info about images not found and images downloaded.
@@ -141,56 +158,29 @@ class Firebase:
         os.makedirs(output_folder, exist_ok=True)
         for upload in uploads:
             for image_info in upload.images:
-                blob = self.__storage.get_blob(image_info.path)
+                blob = self.__storage.get_blob(image_info.firebase_path)
                 if blob:
-                    output_basename = image_info.path.replace('/', '_')
+                    output_basename = image_info.firebase_path.replace('/', '_')
                     output_path = os.path.join(output_folder, output_basename)
                     blob.download_to_filename(output_path)
                     if os.path.isfile(output_path):
                         nb_downloaded += 1
+                        image_info.local_path = output_path
                         if verbose:
-                            print('DOWNLOADED', image_info.path, '=>', output_path)
+                            print('DOWNLOADED', image_info.firebase_path, '=>', output_path)
                 elif verbose:
-                    print('NOT FOUND', image_info.path)
+                    print('NOT FOUND', image_info.firebase_path)
         return nb_downloaded
 
 
-def example_download_1_image():
-    """ Usage example.
-        ** NB **: To be able to connect to Firebase, a credentials file called `credentials.json` should be placed
-        in the folder where script is executed. Please ask to project owner to get a copy of credentials file.
+def images_by_category(uploads):
+    # type: (List[UploadInfo]) -> Dict[str, List[ImageInfo]]
+    """ Classify images of given list of uploads per image category.
+        :param uploads: list of UploadInfo objects.
+        :return: a dictionary matching each category found to a list of images (ImageInfo objects).
     """
-    firebase = Firebase()
-    public_uploads = firebase.get_public_uploads()
-    print(len(public_uploads), 'public upload(s).')
-    image_info_example = public_uploads[0].images[0]
-    firebase.download_image(image_info_example, image_info_example.path)
-    print('An image was downloaded to', image_info_example.path)
-
-
-def example_download_all_images():
-    firebase = Firebase()
-    public_uploads = firebase.get_public_uploads()
-    sorted_uploads = sorted(public_uploads, key=lambda u: (u.timestamp, u.upload_id))
-    print('Uploads:')
-    for upload in public_uploads:
-        print('\t%s\t%s' % (upload.upload_id, upload.timestamp))
-    print('Uploaded sorted by timestamp:')
-    for upload in sorted_uploads:
-        print('\t%s\t%s' % (upload.upload_id, upload.timestamp))
-    after = sorted_uploads[1].timestamp
-    recent_uploads = firebase.get_public_uploads(after=after)
-    print('Recent uploads after', after)
-    for upload in recent_uploads:
-        print('\t%s\t%s' % (upload.upload_id, upload.timestamp))
-    print('Downloading images from recent uploads.')
-    nb_downloaded = firebase.download_all_images(recent_uploads, 'public', verbose=True)
-    print('Downloaded', nb_downloaded, '/', sum(len(u.images) for u in recent_uploads), 'images from recent uploads.')
-
-
-def main():
-    example_download_all_images()
-
-
-if __name__ == '__main__':
-    main()
+    categories = {}
+    for upload in uploads:
+        for image_info in upload.images:
+            categories.setdefault(image_info.category, []).append(image_info)
+    return categories
