@@ -17,10 +17,11 @@ for an usage example.
    python firebase.py
    ```
 
-Script will:
-1) download all uploads info in `public` collection,
-2) print number of uploads in `public` collection,
-3) download first image from first upload,
-4) print path where downloaded image is stored.
-   Path will be like `public/<uploadID>/<imageID>.<imageExtension>` in the folder where script was
-   executed. Check function `main()` in script to see how to change save path.
+# Tutorial
+
+The script provide classes
+`Firebase` (database management),
+`UploadInfo` (data about an upload batch stored in database)
+and `ImageInfo` (paths and metadata about an images from an upload)
+to get access to data stored in Firebase. Please see `main()` function
+in `firebase.py` to get examples of how to use these classes.
