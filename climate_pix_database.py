@@ -3,6 +3,7 @@ import sys
 from typing import List, Optional, Dict
 
 import firebase_admin
+import ujson as json
 from firebase_admin import firestore, storage as firebase_storage, credentials
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 from google.cloud.firestore_v1.collection import CollectionReference
@@ -64,6 +65,19 @@ class UploadInfo:
         # Convert timestamp field (DateWithNanoseconds object) to nanoseconds as integer.
         timestamp = self.timestamp.timestamp_pb()
         return timestamp.seconds * 1000000000 + timestamp.nanos
+
+
+def images_by_category(uploads):
+    # type: (List[UploadInfo]) -> Dict[str, List[ImageInfo]]
+    """ Classify images of given list of uploads per image category.
+        :param uploads: list of UploadInfo objects.
+        :return: a dictionary matching each category found to a list of images (ImageInfo objects).
+    """
+    categories = {}
+    for upload in uploads:
+        for image_info in upload.images:
+            categories.setdefault(image_info.category, []).append(image_info)
+    return categories
 
 
 class ClimatePixDatabase:
@@ -144,43 +158,68 @@ class ClimatePixDatabase:
                 is_downloaded = True
         return is_downloaded
 
-    def download_all_images(self, uploads, output_folder, verbose=False):
-        # type: (List[UploadInfo], str, bool) -> int
+    def download_all_images(self, uploads, output_folder, categorize=False, verbose=False, save_metadata=True):
+        # type: (List[UploadInfo], str, bool, bool, bool) -> int
         """ Download all images from given list of uploads to given output folder.
             If an image is successfully downloaded, field ImageInfo.local_path
             of corresponding ImageInfo object will be updated with local image path.
             :param uploads: a list of UploadInfo objects.
             :param output_folder: string representing output folder. Will be created if not exists.
+            :param categorize: if True, group images by category into output folder. Each category will be
+                a sub-folder with category as name, containing associated images files.
             :param verbose: if True, print some info about images not found and images downloaded.
+            :param save_metadata: if True, save metadata associated to images into a JSON file.
+                - If `categorize` is False, save metadata into `<output_folder>/metadata.json`. JSON object will be a
+                  dictionary mapping each image file path to a dictionary of metadata (category, location and timestamp).
+                - If `categorize` is True, save metadata for each category into `<output_folder>/<category>/metadata.json`.
+                  JSON object will be a dictionary mapping each image file path to a dictionary of metadata
+                  (location and timestamp).
             :return: number of images downloaded.
         """
         nb_downloaded = 0
-        os.makedirs(output_folder, exist_ok=True)
+        metadata = {}
         for upload in uploads:
             for image_info in upload.images:
                 blob = self.__storage.get_blob(image_info.firebase_path)
                 if blob:
-                    output_basename = image_info.firebase_path.replace('/', '_')
-                    output_path = os.path.join(output_folder, output_basename)
+                    output_pieces = [output_folder]
+                    if categorize:
+                        output_pieces.append(image_info.category)
+                    output_pieces.append(image_info.firebase_path.replace('/', '_'))
+                    output_path = os.path.join(*output_pieces)
+                    os.makedirs(os.path.join(*output_pieces[:-1]), exist_ok=True)
                     blob.download_to_filename(output_path)
                     if os.path.isfile(output_path):
                         nb_downloaded += 1
                         image_info.local_path = output_path
+                        if save_metadata:
+                            if categorize:
+                                metadata.setdefault(image_info.category, {})[output_path] = {
+                                    'location': image_info.location,
+                                    'timestamp': str(upload.timestamp)
+                                }
+                            else:
+                                metadata[output_path] = {
+                                    'category': image_info.category,
+                                    'location': image_info.location,
+                                    'timestamp': str(upload.timestamp)
+                                }
                         if verbose:
                             print('DOWNLOADED', image_info.firebase_path, '=>', output_path)
                 elif verbose:
                     print('NOT FOUND', image_info.firebase_path)
+        if save_metadata:
+            if categorize:
+                for category, data in metadata.items():
+                    json_path = os.path.join(output_folder, category, 'metadata.json')
+                    with open(json_path, 'w') as file:
+                        json.dump(data, file, indent=1)
+                    if verbose:
+                        print('METADATA SAVED', json_path)
+            else:
+                json_path = os.path.join(output_folder, 'metadata.json')
+                with open(json_path, 'w') as file:
+                    json.dump(metadata, file, indent=1)
+                if verbose:
+                    print('METADATA SAVED', json_path)
         return nb_downloaded
-
-
-def images_by_category(uploads):
-    # type: (List[UploadInfo]) -> Dict[str, List[ImageInfo]]
-    """ Classify images of given list of uploads per image category.
-        :param uploads: list of UploadInfo objects.
-        :return: a dictionary matching each category found to a list of images (ImageInfo objects).
-    """
-    categories = {}
-    for upload in uploads:
-        for image_info in upload.images:
-            categories.setdefault(image_info.category, []).append(image_info)
-    return categories
