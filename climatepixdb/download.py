@@ -2,7 +2,7 @@ import argparse
 from datetime import datetime
 from typing import Optional
 
-from climate_pix_database import ClimatePixDatabase
+from climatepixdb.database import ClimatePixDatabase
 
 
 def parse_since(value):
@@ -16,8 +16,18 @@ def parse_since(value):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='Download images uploaded into ClimatePix Firebase database.',
+        prog='Helper script to download images from ClimatePix database',
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+This script can be used to download images and related metadata uploaded into ClimatePix app database.
+
+A credentials file named "credentials.json" must be present in the working directory
+to help the script connect to database.
+
+If you don't have this file, please contact a CCAI project member.
+
+If you have this file, either place it where you want to run the script,
+or run the script where the file is stored.""",
         epilog="""
 Output:
 - If images are not grouped by category, then they are directly downloaded into output folder,

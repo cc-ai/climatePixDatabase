@@ -3,4 +3,5 @@
 /public
 /dev
 /.test
+/climatepixdb.egg-info
 __pycache__
