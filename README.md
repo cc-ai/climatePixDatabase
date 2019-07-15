@@ -7,7 +7,7 @@ to help manage ClimatePix database stored in Firebase.
 
 1\) Clone repository:
 ```
-git clone https://github.com/notoraptor/climatePixDatabase.git
+git clone https://github.com/cc-ai/climatePixDatabase.git
 ```
 
 2\) Move into cloned repository.
