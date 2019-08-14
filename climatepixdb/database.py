@@ -7,7 +7,7 @@ import ujson as json
 from firebase_admin import firestore, storage as firebase_storage, credentials
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 from google.cloud.firestore_v1.collection import CollectionReference
-
+from google.api_core.exceptions import NotFound
 
 class UploadError(Exception):
     """ Specific upload exception raised if a upload document from database is invalid. """
@@ -116,22 +116,33 @@ class ClimatePixDatabase:
         self.__public_collection = self.__database.collection('public')
 
     @staticmethod
-    def __get_uploads(collection, after=None):
-        # type: (CollectionReference, Optional[DatetimeWithNanoseconds]) -> List[UploadInfo]
+    def __get_uploads(collection, before=None, after=None):
+        # type: (CollectionReference, Optional[DatetimeWithNanoseconds], Optional[DatetimeWithNanoseconds]) -> List[UploadInfo]
         """ Retrieve uploads from given collection. If after is specified, it should be a
             DateWithNanoseconds object used to return only uploads occurred after this date.
             :param collection: a Firebase collection object (e.g. ClimatePixDatabase.__dev_collection
                 and ClimatePixDatabase.__public_collection attributes)
+            :param before: (optional) a DateWithNanoseconds object representing a timestamp.
+                If provided, only uploads strictly older than this timestamp will be returned.
             :param after: (optional) a DateWithNanoseconds object representing a timestamp
                 (e.g. ImageInfo.timestamp field). If provided, only uploads
                 strictly more recent than this timestamp will be returned.
+                NB: after or before should be provided, or none of them, but not both of them.
             :return: a list of UploadInfo objects.
         """
         uploads = []
-        if after is None:
+        if before is None and after is None:
             stream = collection.stream()
         else:
-            stream = collection.where('timestamp', '>', after).stream()
+            if before is not None and after is not None:
+                raise AssertionError('after and before cannot be provided both.')
+            if after is not None:
+                comparison = '>'
+                timestamp = after
+            else:
+                comparison = '<'
+                timestamp = before
+            stream = collection.where('timestamp', comparison, timestamp).stream()
         for doc in stream:
             try:
                 uploads.append(UploadInfo(collection.id, doc.id, doc.to_dict()))
@@ -139,23 +150,23 @@ class ClimatePixDatabase:
                 print('[Collection %s] Invalid upload dictionary' % collection.id, doc.id, file=sys.stderr)
         return uploads
 
-    def get_dev_uploads(self, after=None):
-        # type: (Optional[DatetimeWithNanoseconds]) -> List[UploadInfo]
+    def get_dev_uploads(self, before=None, after=None):
+        # type: (Optional[DatetimeWithNanoseconds], Optional[DatetimeWithNanoseconds]) -> List[UploadInfo]
         """ Retrieve uploads info from `dev` database folder.
-            If after is provided, it should be a timestamp as DateWithNanoseconds object
-            (e.g. ImageInfo.timestamp field), and only uploads strictly more recent
-            than this date will be returned.
+            If before XOR after is provided, it should be a timestamp as DateWithNanoseconds object
+            (e.g. ImageInfo.timestamp field), and only uploads strictly more recent (if after)
+            or older (if before) will be returned.
         """
-        return self.__get_uploads(self.__dev_collection, after=after)
+        return self.__get_uploads(self.__dev_collection, before=before, after=after)
 
-    def get_public_uploads(self, after=None):
-        # type: (Optional[DatetimeWithNanoseconds]) -> List[UploadInfo]
+    def get_public_uploads(self, before=None, after=None):
+        # type: (Optional[DatetimeWithNanoseconds], Optional[DatetimeWithNanoseconds]) -> List[UploadInfo]
         """ Retrieve uploads info from `public` database folder.
-            If after is provided, it should be a timestamp as DateWithNanoseconds object
-            (e.g. ImageInfo.timestamp field), and only uploads strictly more recent
-            than this date will be returned.
+            If before XOR after is provided, it should be a timestamp as DateWithNanoseconds object
+            (e.g. ImageInfo.timestamp field), and only uploads strictly more recent (f after)
+            or older (if before)  will be returned.
         """
-        return self.__get_uploads(self.__public_collection, after=after)
+        return self.__get_uploads(self.__public_collection, before=before, after=after)
 
     def download_image(self, image_info, filename):
         # type: (ImageInfo, str) -> bool
@@ -242,3 +253,41 @@ class ClimatePixDatabase:
                 if verbose:
                     print('METADATA SAVED', json_path)
         return nb_downloaded
+
+    def delete_all_images(self, uploads, force=False, verbose=False):
+        # type: (List[UploadInfo], bool, bool) -> None
+        """ Delete all images from given list of uploads on server.
+            :param uploads: a list of UploadInfo objects.
+            :param force: if True, delete images without asking for confirmation.
+            :param verbose: if True, print some info about deleted images.
+        """
+        nb_deleted = 0
+        for upload in uploads:
+            col = self.__database.collection(upload.collection_id)
+            doc = col.document(upload.upload_id)
+            path = '%s/%s' % (upload.collection_id, upload.upload_id)
+            if not force:
+                to_delete = None
+                while to_delete is None:
+                    raw_reply = input(
+                        'Delete this upload? (Yes/yes/y or No/no/n) [%s]:' % path).strip().lower()
+                    if raw_reply in ('y', 'yes'):
+                        to_delete = True
+                    elif raw_reply in ('n', 'no'):
+                        to_delete = False
+                    else:
+                        print('Bad reply ...')
+                if not to_delete:
+                    continue
+            for image_info in upload.images:
+                try:
+                    self.__storage.delete_blob(image_info.firebase_path)
+                    nb_deleted += 1
+                    if verbose:
+                        print('[IMAGE DELETED]', image_info.firebase_path)
+                except NotFound:
+                    if verbose:
+                        print('[IMAGE NOT FOUND]', image_info.firebase_path)
+            doc.delete()
+            if verbose:
+                print('[DOC DELETED]', doc.id)

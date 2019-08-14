@@ -1,7 +1,8 @@
 # climatePixDatabase
 
-Module `climatepixdb/database.py` and script `climatepixdb/download.py`
-to help manage ClimatePix database stored in Firebase.
+Module `climatepixdb/database.py` provided to help manage ClimatePix database stored in Firebase. Available scripts:
+- `climatepixdb/download`: helper to download images from database
+- `climatepixdb/delete`: helper to delete images on database
 
 # Tutorial
 
@@ -28,9 +29,10 @@ and place it in folder where you want to execute the script (e.g. `my_images`).
 cd my_images
 ```
 
-6\) Script module is `climatepixdb.download`. You can use parameter `-h` to get full help.
+6\) Run a script. You can use parameter `-h` to get full help.
 ```
 python -m climatepixdb.download -h
+python -m climatepixdb.delete -h
 ```
 
 7\) Example to download all public images grouped by category
@@ -43,6 +45,16 @@ python -m climatepixdb.download --output output_folder --since all --categorize 
 and store them into output folder `my_folder`; still print download info.
 ```
 python -m climatepixdb.download --output my_folder --since 2019-07-10 --verbose
+```
+
+9\) Example to delete all development images uploaded after 10th of July, 2019.
+```bash
+python -m climatepixdb.delete --dev --after 2019-07-10
+```
+
+10\) Example to delete all public images uploaded before 10th of July, 2019.
+```bash
+python -m climatepixdb.delete --before 2019-07-10
 ```
 
 # Reference
