@@ -67,9 +67,9 @@ class UploadInfo:
         timestamp = dictionary['timestamp']
         images = dictionary['images']
         if not isinstance(timestamp, DatetimeWithNanoseconds):
-            raise UploadError('Invalid upload dictionary timestamp format.')
+            raise UploadError('Invalid timestamp format.')
         if not isinstance(images, list):
-            raise UploadError('Invalid upload dictionary images format.')
+            raise UploadError('Invalid images format (expected a list, got %s).' % (type(images).__name__))
         self.collection_id = collection_id
         self.upload_id = upload_id
         self.images = [ImageInfo(image_dictionary) for image_dictionary in images]
@@ -108,7 +108,7 @@ class ClimatePixDatabase:
             raise CredentialsError(credentials_file_name)
 
         cred = credentials.Certificate(credentials_file_name)
-        options = {"storageBucket": "floodreport-d0dfb.appspot.com", }
+        options = {"storageBucket": "climatepixweb-244121.appspot.com", }
         firebase_admin.initialize_app(cred, options=options)
         self.__database = firestore.client()
         self.__storage = firebase_storage.bucket()
@@ -146,8 +146,9 @@ class ClimatePixDatabase:
         for doc in stream:
             try:
                 uploads.append(UploadInfo(collection.id, doc.id, doc.to_dict()))
-            except UploadError:
-                print('[Collection %s] Invalid upload dictionary' % collection.id, doc.id, file=sys.stderr)
+            except UploadError as exc:
+                print('[Entry %s / %s] Invalid upload dictionary.' % (
+                    collection.id, doc.id), exc, file=sys.stderr)
         return uploads
 
     def get_dev_uploads(self, before=None, after=None):

@@ -5,3 +5,4 @@
 /.test
 /climatepixdb.egg-info
 __pycache__
+/*.json
