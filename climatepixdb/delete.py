@@ -1,6 +1,8 @@
 import argparse
+
+from climatepixdb.core.database import ClimatePixDatabase
 from climatepixdb.download import parse_since
-from climatepixdb.database import ClimatePixDatabase
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -22,33 +24,49 @@ or run the script where the file is stored."""
                         action='store_true',
                         help='If specified, delete images from development collection. '
                              'By default, download images from public collection.')
+    parser.add_argument('--invalid', '-i', action='store_true',
+                        help='Delete only invalid collection entries not associated to any image. '
+                             'NB: arguments "before", "after" and "invalid" are mutually exclusive.')
     parser.add_argument('--before', '-b', type=parse_since,
                         help='Delete images before this date. Format "AAAA-MM-DD". '
-                             'NB: You must provide either before of after, but not both.')
+                             'NB: arguments "before", "after" and "invalid" are mutually exclusive.')
     parser.add_argument('--after', '-a', type=parse_since,
                         help='Delete images after this date. Format "AAAA-MM-DD". '
-                             'NB: You must provide either before of after, but not both.')
+                             'NB: arguments "before", "after" and "invalid" are mutually exclusive.')
     parser.add_argument('--force', '-f', action='store_true',
-                        help='If specified, force deletions without asking confirmation.')
+                        help='If specified, force deletions without asking confirmation. '
+                             'Used with --before or --after only.')
     # parser.add_argument('--verbose', '-v', action='store_true',
     #                     help='If specified, print downloading status.')
     args = parser.parse_args()
+    dev = args.dev
     before = args.before
     after = args.after
-    dev = args.dev
-    if before is None and after is None:
-        raise ValueError('You must specify either --before of --after.')
-    if before is not None and after is not  None:
-        raise ValueError('You must specify --before of --after, not both.')
-    print('Deleting %simages %s %s' % (
-        'development ' if dev else '',
-        'before' if before is not None else 'after',
-        before if before is not None else after
-    ))
+    invalid = args.invalid
+    nb_del_args = (before is not None) + (after is not None) + invalid
+    if nb_del_args != 1:
+        raise ValueError('You must specify exactly one flag between '
+                         '--before, --after and --invalid.')
+
+    print('Deleting ', end='')
+    if invalid:
+        print('invalid documents', end='')
+        if dev:
+            print(' from development collection', end='')
+    else:
+        if dev:
+            print('development ', end='')
+        print('images', 'before %s' % before if before else 'after %s' % after, end='')
+    print('.')
+
     database = ClimatePixDatabase()
-    uploads = (database.get_dev_uploads(before=before, after=after)
-               if dev else database.get_public_uploads(before=before, after=after))
-    database.delete_all_images(uploads=uploads, force=args.force, verbose=True)
+    if invalid:
+        uploads = (database.get_dev_uploads() if dev else database.get_public_uploads())
+        database.delete_invalid_documents(uploads)
+    else:
+        uploads = (database.get_dev_uploads(before=before, after=after)
+                   if dev else database.get_public_uploads(before=before, after=after))
+        database.delete_uploads(uploads=uploads, force=args.force, verbose=True)
 
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@ import argparse
 from datetime import datetime
 from typing import Optional
 
-from climatepixdb.database import ClimatePixDatabase
+from climatepixdb.core.database import ClimatePixDatabase
 
 
 def parse_since(value):
@@ -58,12 +58,15 @@ Output:
                         help='If specified, group images by category sub-folders into output folder. '
                              'Sub-folders names will be categories names. '
                              'By default, download all images directly into output folder.')
-    parser.add_argument('--verbose', '-v', action='store_true', help='If specified, print downloading status.')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='If specified, print downloading status.')
 
     args = parser.parse_args()
 
     download_info = (
-            ('development ' if args.dev else '') + 'images' + (' grouped by category' if args.categorize else ''))
+            ('development ' if args.dev else '')
+            + 'images'
+            + (' grouped by category' if args.categorize else ''))
 
     print('Downloading',
           ('all %s' % download_info
@@ -72,8 +75,10 @@ Output:
           'into folder', args.output)
 
     database = ClimatePixDatabase()
-    uploads = database.get_dev_uploads(after=args.since) if args.dev else database.get_public_uploads(after=args.since)
-    database.download_all_images(uploads, args.output, verbose=args.verbose, categorize=args.categorize)
+    uploads = (database.get_dev_uploads(after=args.since)
+               if args.dev
+               else database.get_public_uploads(after=args.since))
+    database.download_all_images(uploads, args.output, args.categorize, args.verbose)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 # climatePixDatabase
 
-Module `climatepixdb/database.py` provided to help manage ClimatePix database stored in Firebase. Available scripts:
+Module `climatepixdb` helps manage ClimatePix database stored in Firebase. Available scripts:
 - `climatepixdb/download`: helper to download images from database
 - `climatepixdb/delete`: helper to delete images on database
 
@@ -21,10 +21,18 @@ cd climatePixDatabase/
 pip install .
 ```
 
+You can also install it as an editable module:
+```
+pip install -e .
+```
+
 4\) Ask project owner for credentials file `credentials.json`
 and place it in folder where you want to execute the script (e.g. `my_images`).
 
-5\) Move into your working folder, where `credentials.json` if available.
+**update (2019/09/10)**: Backend Firebase account was changed. If you used a credentials file obtained
+before 2019/09/10, you should ask for a new one to a project owner.
+
+5\) Move into your working folder, where `credentials.json` is available.
 ```
 cd my_images
 ```
@@ -57,6 +65,18 @@ python -m climatepixdb.delete --dev --after 2019-07-10
 python -m climatepixdb.delete --before 2019-07-10
 ```
 
+11\) Examples to delete all invalid uploads in database. An invalid upload is an upload with no
+associated images. Such cases may occur, for example if a user starts an upload but closes the
+browser before upload was terminated. So, it may be useful to regularly clean database using
+following command:
+```bash
+# Clean public collection
+python -m climatepixdb.delete --invalid
+
+# Clean dev collection
+python -m climatepixdb.delete --invalid --dev
+```
+
 # Reference
 
-For API programming, see documentation strings in `climatepixdb/database.py`.
+For API programming, see documentation strings in module `climatepixdb`.
