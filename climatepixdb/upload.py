@@ -1,4 +1,5 @@
 import argparse
+
 from climatepixdb.core.database import ClimatePixDatabase
 
 
@@ -25,6 +26,7 @@ def main():
     args = parser.parse_args()
     database = ClimatePixDatabase()
     database.upload(args.metadata)
+
 
 if __name__ == '__main__':
     main()

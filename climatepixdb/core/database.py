@@ -1,6 +1,7 @@
 import os
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
 import firebase_admin
 import ujson as json
 from firebase_admin import firestore, storage as firebase_storage, credentials
@@ -10,54 +11,10 @@ from google.cloud.firestore_v1.collection import CollectionReference
 
 from climatepixdb.core.errors import UploadError, CredentialsError
 from climatepixdb.core.image_info import ImageInfo
+from climatepixdb.core.sending_utils import Sending, UploadToSend
 from climatepixdb.core.upload_failure import UploadFailure
 from climatepixdb.core.upload_info import UploadInfo
 from climatepixdb.core.upload_list import UploadList
-
-
-class Sending:
-    def __init__(self):
-        self.category = None
-        self.location = None
-        self.timestamp = None
-        self.path = None
-        self.firebase_path = None
-        self.collection_id = None
-        self.upload_id = None
-        self.url = None
-
-    @property
-    def image_id(self):
-        return int(os.path.splitext(os.path.basename(self.firebase_path))[0])
-
-    def to_upload(self):
-        return {
-            'category': self.category,
-            'location': self.location,
-            'path': self.firebase_path,
-            'url': self.url,
-        }
-
-    def __repr__(self):
-        return str(self)
-
-    def __str__(self):
-        return '(CATEGORY %s, LOCATION %s, TIMESTAMP %s, COLLECTION %s, UPLOAD ID %s, ID %s, PATH %s)' % (
-            self.category,
-            self.location,
-            self.timestamp,
-            self.collection_id,
-            self.upload_id,
-            self.firebase_path,
-            self.path
-        )
-
-
-class UploadToSend:
-    def __init__(self, upload_id, timestamp, images):
-        self.upload_id = upload_id
-        self.timestamp = timestamp
-        self.images = images
 
 
 class ClimatePixDatabase:
@@ -180,7 +137,7 @@ class ClimatePixDatabase:
                 else:
                     images_without_metadata.add(blob.name)
                     category = ImageInfo.UNKNOWN_CATEGORY
-                    location = ImageInfo.UNKNOWN_CATEGORY
+                    location = ""
                     if upload_id in uploads.failures:
                         timestamp = uploads.failures[upload_id].timestamp
                     else:
@@ -316,69 +273,83 @@ class ClimatePixDatabase:
     def upload(self, metadata_file_name):
         # type: (str) -> None
         metadata_file_name = os.path.abspath(metadata_file_name)
-        main_directory_path = os.path.dirname(metadata_file_name)
+        metadata_directory = os.path.dirname(metadata_file_name)
         with open(metadata_file_name, 'r') as file:
             metadata = json.load(file)
         if not isinstance(metadata, dict):
             raise RuntimeError('Metadata is not a dictionary in file %s' % metadata_file_name)
-        images_to_send = []
         structured_to_send = {}
         uploads_to_send = {}
         nb_no_category = 0
+        nb_sendings = 0
         for image_path, image_metadata in sorted(metadata.items()):
             image_basename = os.path.basename(image_path)
             sending = Sending()
             sending.category = image_metadata.get('category', None)
-            sending.location = image_metadata.get('location', None)
-            sending.timestamp = image_metadata.get('timestamp', None)
+            sending.location = image_metadata['location']
+            sending.timestamp = image_metadata['timestamp']
             sending.firebase_path = image_basename.replace('_', '/')
-            sending.collection_id, sending.upload_id, _ = sending.firebase_path.split('/')
-            sending.path = os.path.join(main_directory_path, image_basename)
-            images_to_send.append(sending)
+            sending.collection_id, sending.upload_id, image_name = sending.firebase_path.split('/')
+            sending.image_id = int(os.path.splitext(image_name)[0])
+            sending.local_path = os.path.join(metadata_directory, image_basename)
+            assert sending.timestamp, 'Got an invalid timestamp'
             nb_no_category += sending.category is None
-        if nb_no_category == len(images_to_send):
-            inferred_category = os.path.basename(main_directory_path)
+            nb_sendings += 1
+            structured_to_send.setdefault(
+                sending.collection_id, {}).setdefault(sending.upload_id, []).append(sending)
+
+        # Check categories.
+        if nb_no_category == nb_sendings:
+            inferred_category = os.path.basename(metadata_directory)
             print('Getting category from metadata containing folder', inferred_category)
-            for sending in images_to_send:
-                sending.category = inferred_category
+            for upload_id_to_sendings in structured_to_send.values():
+                for sendings in upload_id_to_sendings.values():
+                    for sending in sendings:
+                        sending.category = inferred_category
         elif nb_no_category != 0:
             raise RuntimeError('Invalid metadata: all images should either have a category or '
                                'no category specified (to be retrieved from metadata folder name).')
-        images_to_send.sort(key=lambda sending: sending.firebase_path)
-        for sending in images_to_send:
-            structured_to_send.setdefault(sending.collection_id, {}).setdefault(sending.upload_id,
-                                                                                []).append(sending)
+
+        # Check timestamps.
         for collection_id, uploads in structured_to_send.items():
             for upload_id, images in uploads.items():
                 timestamps = {sending.timestamp for sending in images}
                 if len(timestamps) != 1:
                     raise RuntimeError('No same timestamp for all images in %s' % upload_id)
                 timestamp = images[0].timestamp
+                # Update timestamp to current date if timestamp is unknown
                 if timestamp == ImageInfo.UNKNOWN_CATEGORY:
-                    timestamp = None
+                    timestamp = datetime.now().isoformat()
                 uploads_to_send.setdefault(collection_id, []).append(UploadToSend(
                     upload_id, timestamp, images))
 
         for collection_id, uploads in uploads_to_send.items():
             col = self.__database.collection(collection_id)
             for upload in sorted(uploads, key=lambda u: u.upload_id):
-                timestamp = upload.timestamp
+                doc = col.document(upload.upload_id)
+                doc_just_created = False
                 try:
+                    doc.create({
+                        'timestamp': datetime.fromisoformat(upload.timestamp),
+                        'images': None
+                    })
+                    doc_just_created = True
                     for sending in upload.images:  # type: Sending
                         blob = self.__storage.blob(sending.firebase_path)
                         if blob.exists():
-                            raise AlreadyExists('An image already exists: %s' % sending.firebase_path)
-                    for sending in upload.images:  # type: Sending
+                            raise AlreadyExists(
+                                'An image already exists: %s' % sending.firebase_path)
+                    for sending in sorted(upload.images, key=lambda s: s.image_id):  # type: Sending
                         blob = self.__storage.blob(sending.firebase_path)
-                        blob.upload_from_filename(sending.path)
+                        blob.upload_from_filename(sending.local_path)
                         sending.url = blob.public_url
                         print('UPLOADED', sending.firebase_path)
-                    doc = col.document(upload.upload_id)
-                    doc.create({
-                        'timestamp': datetime.fromisoformat(timestamp),
+                    doc.update({
                         'images': [sending.to_upload() for sending in sorted(
                             upload.images, key=lambda s: s.image_id)]
                     })
                     print('CREATED UPLOAD', upload.upload_id)
                 except AlreadyExists as exc:
                     print('CANNOT SEND UPLOAD', upload.upload_id, exc)
+                    if doc_just_created:
+                        doc.delete()

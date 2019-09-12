@@ -14,9 +14,9 @@ class ImageInfo:
     DEFAULT_CATEGORY = 'Flood'
     UNKNOWN_CATEGORY = '__unknown__'
 
-    def __init__(self, dictionary):
+    def __init__(self, dictionary, local_path=None):
         self.category = dictionary['category'] or ImageInfo.DEFAULT_CATEGORY
         self.location = dictionary['location']
         self.firebase_path = dictionary['path']
         self.url = dictionary['url']
-        self.local_path = None
+        self.local_path = local_path
