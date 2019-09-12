@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='climatepixdb',
     version='0.1',
-    packages=['climatepixdb'],
+    packages=['climatepixdb', 'climatepixdb.core'],
     install_requires=[
         'firebase-admin',
         'ujson'
